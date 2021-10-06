@@ -11,6 +11,8 @@
 #include "Interrupt.h"
 #include "Sine.h"		/* for the default note type */
 
+
+
 /*
  * for simplicity have everything volatile so the optimization
  * won't hide variables from the interrupt service routine
@@ -25,14 +27,15 @@ volatile unsigned int xdelta = 1;
 volatile unsigned char evcount;
 volatile unsigned int elim = 0;
 
-/* setup the note waveshape and envelope */
-const unsigned char *notebase = snote;
-const unsigned char *envelopebase = senvelope;
+/* store the note waveshape and envelope */
+static unsigned char notes[256];
+static unsigned char envelope[256];
 
-void setnotetype (const unsigned char *note, const unsigned char *envelope)
+void setnotetype (const unsigned char *note, const unsigned char *env)
 {
-	notebase = note;
-	envelopebase = envelope;
+int i;
+      for (i = 0; i < 256 ; i++) notes[i] = pgm_read_byte_near (note + i);
+      for (i = 0; i < 256 ; i++) envelope[i] = pgm_read_byte_near (env + i);
 }
 
 /* these values set the note ratios
@@ -50,21 +53,20 @@ void setupInterrupts ()
 {
 	cli(); /* stop interrupts whilst we set everything up */
 /*  Timer 2: */
-	pinMode(11, OUTPUT);	// Configure output pins
-	pinMode(3, OUTPUT);		// 0C2A = Pin11, 0C2B = Pin3
-	// WGM22, WGM21, WGM20 : 0, 1, 1 : Mode 3 => Fast PWM, TOP = 0xFF, Update OCR2A on BOTTOM, TOV FlagSet on MAX
-	// COM2A0, COM2A1 : 1, 0 => Clear OC2A on compare match, set OC2A at BOTTOM,(non-inverting mode)
-	// COM2B0, COM2B1 : 1, 1 => Set OC2B on compare match, clear OC2B at BOTTOM,(inverting mode)
-	// CS22, CS21, CS20 : 0, 0, 1 => clk/1  (no prescaling)
-	TCCR2A = (1 << COM2A1) | (1 << COM2B0) | (1 << COM2B1) | (1 << WGM21) | (1 << WGM20);
-	TCCR2B = (1 << CS20);
-	TIMSK2 = (1 << TOIE2);  // enable timer compare interrupt
-	OCR2A = 200; // some initial values
-	OCR2B = 200;
+	pinMode(9, OUTPUT);	// Configure output pins
+	pinMode(10, OUTPUT);		// 0C1A = Pin9, 0C1B = Pin10
+	// WGM13, WGM12, WGM11, WGM10 : 0, 1, 0, 1 : Mode 5 => Fast PWM, TOP = 0xFF, Update OCR1A on BOTTOM, TOV FlagSet on TOP
+	// COM1A0, COM1A1 : 1, 0 => Clear OC1A on compare match, set OC1A at BOTTOM,(non-inverting mode)
+	// COM1B0, COM1B1 : 1, 1 => Set OC1B on compare match, clear OC1B at BOTTOM,(inverting mode)
+	// CS12, CS11, CS10 : 0, 0, 1 => clk/1  (no prescaling)
+	TCCR1A = (1 << COM1A1) | (1 << COM1B0) | (1 << COM1B1) | (0 << WGM11) | (1 << WGM10);
+	TCCR1B = (1 << CS10) | (0 << WGM13) | (1 << WGM12);
+	TIMSK1 = (1 << TOIE1);  // enable timer compare interrupt
+	OCR1A = OCR1B = 200; // some initial values
 	sei(); // enable interrupts
 }
 
-ISR(TIMER2_OVF_vect) /* timer 2 overflow ISR */
+ISR(TIMER1_OVF_vect) /* timer 1 overflow ISR */
 {	/* interpolate to the desired note */
 	total += ydelta;
 	while (total > 0)
@@ -83,12 +85,12 @@ ISR(TIMER2_OVF_vect) /* timer 2 overflow ISR */
 		if (evcount < 255) evcount++;
 		tock = 0; /* restart the timer */
 		}
-	int val = (((int)pgm_read_byte_near (notebase + tick))-128) * pgm_read_byte_near (envelopebase + evcount);
-	OCR2A = OCR2B = (val >> 8) + 127;
+	OCR1A = OCR1B = (((int)notes[tick]) * (int)envelope[evcount]) >> 8; //* pgm_read_byte_near (envelopebase + evcount);
 }
 
 void playnote (unsigned char note, int period)
 {
+  note = note + 6;
 /*
  * the PWM interrupts occur at 16 MHz / 256
  * our wave shape has 256 elements so one cycle (at one element per interrupt)
